@@ -18,18 +18,25 @@ class VST
 {
 	private final String name;
 	private final String dll;
-	private final int bypass;
+	private final int bypass;	// Not sure about this one...
 	
 	public VST(final ReaperTokenizer reader) throws java.io.IOException
 	{
-		assert reader.getWord().equals("VST") : "Expected VST as current token (Track)";
+		assert reader.getWord().equals("BYPASS") : "Expected BYPASS as current token (VST)";
+		// Next comes three numbers of which the first represents the bypass mode, and the other two... IDK
+		reader.nextToken();
+
+		assert reader.getToken() == ReaperTokenizer.TokenType.NUMBER : "Expected NUMBER as current token (VST)";
+		this.bypass = (int)Double.parseDouble(reader.getWord());
+		
+		reader.skipTo("VST");	// If a BYPASS was found, there should come now a "<VST"
+		assert reader.getWord().equals("VST") : "Expected VST as current token (VST)";
 		reader.nextToken();	// Should be the name
 		this.name = reader.getWord();
 		reader.nextToken();	// Should be the dll
 		this.dll = reader.getWord();
 		reader.nextToken();	// Should be the bypass state (should it?)
-		assert reader.getToken() == ReaperTokenizer.Tokens.NUMBER : "Expected NUMBER as current token (VST)";
-		this.bypass = (int)Double.parseDouble(reader.getWord());
+
 	}
 	
 	@Override
@@ -37,7 +44,8 @@ class VST
 	{
 		StringBuffer buf = new StringBuffer();
 		buf.append(this.name).append(" [").append(this.dll).append("] ");
-		if(this.bypass == 0) buf.append("bypassed");
+		
+		if(this.bypass == 1) buf.append("bypassed");
 			
 		return buf.toString();
 	}
@@ -46,6 +54,11 @@ class VST
 //----------------------------------
 class Track
 {
+	private static final String MUTESOLO = "MUTESOLO";
+	private static final String FXCHAIN = "FXCHAIN";
+	private static final String TRACK_NAME = "NAME";
+	private static final String TRACK_BEGIN = "TRACK";
+	
 	private final ReaperTokenizer reader;
 	private final int track_num;
 	private final String UUID;
@@ -55,6 +68,9 @@ class Track
 //	private final int wide;
 	private final int mute;
 	private final int solo;
+	private final int phase;
+	private final int[] bus;
+	private final int[] mainsend;
 	private final java.util.List<VST> fx_list = new java.util.LinkedList<>();
 	private final java.util.List<Sends> sends_list = new java.util.LinkedList<>();
 	
@@ -62,7 +78,7 @@ class Track
 	{
 		this.reader = reader;
 
-		assert this.reader.getWord().equals("TRACK") : "Expected TRACK as current token";
+		assert this.reader.getWord().equals(TRACK_BEGIN) : "Expected " + TRACK_BEGIN + "  as current token";
 		
 		this.track_num = num;
 
@@ -70,19 +86,19 @@ class Track
 		this.UUID = this.reader.getWord();
 		this.reader.nextToken();	// Should be "NAME";
 		
-		assert this.reader.getWord().equals("NAME") : "Expected NAME as current token (Track)";
+		assert this.reader.getWord().equals(TRACK_NAME) : "Expected " + TRACK_NAME + " as current token (Track)";
 		
 		this.reader.nextToken();	// Should be the name string, may be empty
 		this.name = this.reader.getWord();
 		
 		if(this.skipToMuteSolo())
 		{
-			assert this.reader.getWord().equals("MUTESOLO") : "Expected MUTESOLO as current token (Track)";
+			assert this.reader.getWord().equals(MUTESOLO) : "Expected " + MUTESOLO + " as current token (Track)";
 			this.reader.nextToken(); 
-			assert this.reader.getToken() == ReaperTokenizer.Tokens.NUMBER : "Expected NUMBER as current token (mute)";
+			assert this.reader.getToken() == ReaperTokenizer.TokenType.NUMBER : "Expected NUMBER as current token (mute)";
 			this.mute = (int)Double.parseDouble(this.reader.getWord());
 			this.reader.nextToken();
-			assert this.reader.getToken() == ReaperTokenizer.Tokens.NUMBER : "Expected NUMBER as current token (solo)";
+			assert this.reader.getToken() == ReaperTokenizer.TokenType.NUMBER : "Expected NUMBER as current token (solo)";
 			this.solo = (int)Double.parseDouble(this.reader.getWord());
 		}
 		else
@@ -132,18 +148,12 @@ class Track
 	
 	private boolean skipToMuteSolo() throws java.io.IOException
 	{
-//		while(this.reader.nextToken() != Tokens.EOF)
-//		{
-//			if(this.reader.getWord().equals("MUTESOLO"))
-//				return true;
-//		}
-//		return false;
-		return this.reader.skipTo("MUTESOLO") != ReaperTokenizer.Tokens.EOF;
+		return this.reader.skipTo(MUTESOLO) != ReaperTokenizer.TokenType.EOF;
 	}
 	
 	private boolean skipToFXchain() throws java.io.IOException
 	{
-		return this.reader.skipTo("FXCHAIN") != ReaperTokenizer.Tokens.EOF;
+		return this.reader.skipTo(FXCHAIN) != ReaperTokenizer.TokenType.EOF;
 	}
 	
 	/*
@@ -155,8 +165,9 @@ class Track
 	**/
 	private boolean skipToVST() throws java.io.IOException
 	{
-		this.reader.skipTo("VST", "TRACK");
-		if(this.reader.getWord().equals("VST"))
+		// "BYPASS" comes right before "<VST", if the VST exists at all
+		this.reader.skipTo("BYPASS", "TRACK");
+		if(this.reader.getWord().equals("BYPASS"))
 			return true;
 		if(this.reader.getWord().equals("TRACK"))
 			this.reader.pushBack();
@@ -168,20 +179,23 @@ abstract class ReaperTokenizer
 {
 	private final java.io.BufferedReader reader;
 	
-	public enum Tokens {EOF, EOL, STRING, NUMBER, CHAR};
+	public enum TokenType {EOF, EOL, STRING, NUMBER, CHAR, OPEN, CLOSE};
 	
 	public ReaperTokenizer(final java.io.BufferedReader br)
 	{
 		this.reader = br;
 	}
 	
-	abstract public Tokens nextToken() throws java.io.IOException;
+	abstract public TokenType nextToken() throws java.io.IOException;
 	abstract public int lineno();
-	abstract public Tokens getToken();
+	abstract public TokenType getToken();
 	abstract public String getWord();
 	abstract public void pushBack();
-	abstract public Tokens skipTo(final String keyword) throws java.io.IOException;
-	abstract public Tokens skipTo(final String keyword1, final String keyword2) throws java.io.IOException;
+	abstract public TokenType skipTo(final String keyword) throws java.io.IOException;
+	abstract public TokenType skipTo(final String keyword1, final String keyword2) throws java.io.IOException;
+	abstract public TokenType skipTo(final TokenType tok) throws java.io.IOException;
+	abstract public TokenType skipTo(final TokenType tok1, final TokenType tok2) throws java.io.IOException;
+	abstract public TokenType skipToClose(final boolean refcount) throws java.io.IOException;
 }
 //-----------------------------------------------
 class RprStreamTokenizer extends ReaperTokenizer
@@ -189,7 +203,7 @@ class RprStreamTokenizer extends ReaperTokenizer
 	private final java.io.StreamTokenizer reader;
 	private int line_number = 0;
 	private String word;
-	private ReaperTokenizer.Tokens token;
+	private ReaperTokenizer.TokenType token;
 	
 	public RprStreamTokenizer(final java.io.BufferedReader br)
 	{
@@ -197,10 +211,12 @@ class RprStreamTokenizer extends ReaperTokenizer
 		this.reader = new java.io.StreamTokenizer(br);
 		this.reader.wordChars('_','_');
 		this.reader.wordChars('{', '}');
+		this.reader.ordinaryChar('<');
+		this.reader.ordinaryChar('>');
 	}
 
 	@Override
-	public Tokens getToken()
+	public TokenType getToken()
 	{
 		return this.token;
 	}
@@ -212,16 +228,18 @@ class RprStreamTokenizer extends ReaperTokenizer
 	}
 	
 	@Override
-	public Tokens nextToken() throws java.io.IOException
+	public TokenType nextToken() throws java.io.IOException
 	{
 		int nxttoken = this.reader.nextToken();
 		
 		switch(nxttoken)
 		{
-			case StreamTokenizer.TT_EOF:	this.token = Tokens.EOF; this.word = "EOF"; break;
-			case StreamTokenizer.TT_EOL:	this.token = Tokens.EOL; this.word = "EOL"; break;
-			case StreamTokenizer.TT_NUMBER:	this.token = Tokens.NUMBER; this.word = Double.toString(this.reader.nval); break;
-			case StreamTokenizer.TT_WORD:	this.token = Tokens.STRING; this.word = this.reader.sval; break;
+			case StreamTokenizer.TT_EOF:	this.token = TokenType.EOF; this.word = "EOF"; break;
+			case StreamTokenizer.TT_EOL:	this.token = TokenType.EOL; this.word = "EOL"; break;
+			case StreamTokenizer.TT_NUMBER:	this.token = TokenType.NUMBER; this.word = Double.toString(this.reader.nval); break;
+			case StreamTokenizer.TT_WORD:	this.token = TokenType.STRING; this.word = this.reader.sval; break;
+			case '<':	this.token = TokenType.OPEN; this.word = "<"; break;
+			case '>':	this.token = TokenType.CLOSE; this.word = ">"; break;
 			default: handleDefault(this.reader.toString());
 		}
 
@@ -241,26 +259,83 @@ class RprStreamTokenizer extends ReaperTokenizer
 		this.reader.pushBack();
 	}
 	
+	/*
+	 * All of teh skipTo methods may return TokenType.EOF, in addition to the 
+	 * tokens of the specified strings or the specified tokens
+	**/
 	@Override
-	public Tokens skipTo(final String keyword) throws java.io.IOException
+	public TokenType skipTo(final String keyword) throws java.io.IOException
 	{
-		while(this.nextToken() != Tokens.EOF)
+		while(this.nextToken() != TokenType.EOF)
 			if(this.word.equals(keyword))
 				return this.token;
 		
-		return this.token;
+		return this.token;		// here we return EOF
 	}
 	
 	@Override
-	public Tokens skipTo(final String keyword1, final String keyword2) throws java.io.IOException
+	public TokenType skipTo(final String keyword1, final String keyword2) throws java.io.IOException
 	{
-		while(this.nextToken() != Tokens.EOF)
+		while(this.nextToken() != TokenType.EOF)
 			if(this.word.equals(keyword1) || this.word.equals(keyword2))
 				return this.token;
 		
-		return this.token;		
+		return this.token;		// here we return EOF
 	}
 	
+	@Override
+	public TokenType skipTo(final TokenType tok) throws java.io.IOException
+	{
+		while(this.nextToken() != TokenType.EOF)
+			if(this.token == tok)
+				return this.token;
+		
+		return this.token;	// here we return EOF
+	}
+	
+	@Override
+	public TokenType skipTo(final TokenType tok1, final TokenType tok2) throws java.io.IOException
+	{
+		while(this.nextToken() != TokenType.EOF)
+			if(this.token == tok1 || this.token == tok2)
+				return this.token;
+		
+		return this.token;	// here we return EOF
+	}
+	
+	/*
+	 * Skips to the next CLOSE token. If refcount == true, then OPEN tokens are
+	 * reference counted so that the matching CLOSE token is skipped to.
+	 * input: x < y < z > > >
+	 * ref:   0 1 1 2 2 1 0 return
+	 * Note that if the input starts with an OPEN, then that OPEN's matching CLOSE
+	 * will not be returned, but something later. Example
+	 * input: < x < y < z > > > ... >
+	 * ref:   1 1 2 2 3 3 2 1 0  0  return
+	 * Reaper has no more than two levels of nesting (well, three if you count
+	 * the top "REAPER_PROJECT" level, but we are always inside that.
+	**/
+	@Override
+	public TokenType skipToClose(final boolean refcount) throws java.io.IOException
+	{
+		int ref = 0;
+		while(this.nextToken() != TokenType.EOF)
+		{
+			if(this.token == TokenType.OPEN && refcount)
+			{	
+				ref++;
+			}
+			else if(this.token == TokenType.CLOSE)
+			{
+				if(ref == 0)
+					return this.token;
+				else
+					--ref;
+			}
+		}
+		return this.token;
+	}
+	//--------------------------------------------------------
 	@Override
 	public String toString()
 	{
@@ -275,9 +350,9 @@ class RprStreamTokenizer extends ReaperTokenizer
 	
 	/*
 	 * Handles the default value coming from the switch
-	 * StreamTokenizer treast all sorts of thinsg as unknown,, empty struings, for instance
-	 * Thi sone trie to extract the token from StreamTokenizer.toString()
-	 * This is a work around, since we do not know teh exact format of that string. The
+	 * StreamTokenizer treats all sorts of things as unknown, empty strings, for instance
+	 * This one tries to extract the token from StreamTokenizer.toString()
+	 * This is a work around, since we do not know the exact format of that string. The
 	 * specs say that "The precise string returned is unspecified, although the following example can be considered typical:
 	 * Token['a'], line 10"
 	**/
@@ -288,11 +363,11 @@ class RprStreamTokenizer extends ReaperTokenizer
 		this.word = result[1];
 		if(this.word.length() == 1)
 		{
-			this.token = Tokens.CHAR;
+			this.token = TokenType.CHAR;
 		}
 		else
 		{
-			this.token = Tokens.STRING;
+			this.token = TokenType.STRING;
 		}
 	}
 }
@@ -314,12 +389,11 @@ public class ReaperreadeR
 
 	public void parse(final int full) throws java.io.IOException
 	{
-		while(this.reader.nextToken() != ReaperTokenizer.Tokens.EOF)
+		while(this.reader.nextToken() != ReaperTokenizer.TokenType.EOF)
 		{
-			this.reader.pushBack();	// Must push this back, else we devour it and may miss a track
-			
 			if(full != 0)	// Do the real mambo...
-			{
+			{	
+				this.reader.pushBack();	// Must push this back, else we devour it and may miss a track
 				if(skipToTrack())
 				{
 					final Track track = new Track(this.track_num++, this.reader);
@@ -331,7 +405,8 @@ public class ReaperreadeR
 			else	// This is basically debug stuff
 				System.out.println(this.reader.toString());
 		}
-
+		// Here we are at EOF
+		
 		if(full == 0)	// Debug stuff
 			System.out.println(this.reader.toString());
 	}
@@ -346,12 +421,12 @@ public class ReaperreadeR
 	
 	private boolean skipToTrack() throws java.io.IOException
 	{
-//		while(this.reader.nextToken() != ReaperTokenizer.Tokens.EOF)
+//		while(this.reader.nextToken() != ReaperTokenizer.TokenType.EOF)
 //		{
 //			if(this.reader.getWord().equals("TRACK"))
 //				return true;
 //		}
-		return this.reader.skipTo("TRACK") != ReaperTokenizer.Tokens.EOF;
+		return this.reader.skipTo("TRACK") != ReaperTokenizer.TokenType.EOF;
 	}
 	
 	/**
